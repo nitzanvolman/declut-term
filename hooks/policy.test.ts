@@ -99,8 +99,6 @@ test('ends: short, empty, failed, declined, blocked, soft failure', async () => 
   const failed = buildRow(base({ output: 'Exit code 2\nls: nope: No such file', isErrored: true, ext: extract('Bash', 'Exit code 2\nls: nope: No such file'), row: { t0: 1 } }))
   expect(failed.lines[0]?.t).toBe('Failed · exit 2')
   expect(failed.lines[1]?.t).toBe('ls: nope: No such file')
-  const declined = buildRow(base({ output: 'refused', isErrored: true, ext: extract('Bash', 'refused'), row: { ph: 'asking' } }))
-  expect(declined.lines[0]?.t).toBe('Not run · you declined it')
   expect(buildRow(base({ row: { ph: 'denied' } })).lines[0]?.t).toBe('Not run · blocked by a permission rule')
   const soft = JSON.stringify({ error: { message: 'chat not found' }, pad: 'p'.repeat(300) })
   const sr = buildRow(base({ tool: 'mcp__whatsapp__send-text', input: { chatId: 'x' }, output: soft, ext: extract('mcp__whatsapp__send-text', soft) }))
@@ -118,4 +116,32 @@ test('calls that may change something show their arguments; Bash writes show the
 
 test('group head', async () => {
   expect(groupHead(['Read', 'Read', 'Read', 'Bash'])).toBe('Read 3 files, ran 1 command')
+})
+
+test('permission: who is asked, and refusals told apart by the engine text', async () => {
+  const at = (ph: 'checking' | 'asking' | 'approval') => buildRow(base({ row: { ph } }))
+  expect(at('checking').lines[0]?.t).toBe('Checking permission…')
+  expect(at('checking').glyph).toBe('inactive')
+  expect(at('asking').lines[0]?.t).toBe('Waiting for your approval')
+  expect(at('approval').lines[0]?.t).toBe('Waiting for approval')
+  expect(at('approval').glyph).toBe('warning')
+
+  const said =
+    "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nuse rg instead"
+  const d = buildRow(base({ output: said, isErrored: true, ext: extract('Bash', said), row: { ph: 'asking' } }))
+  expect(d.lines.map(l => l.t)).toEqual(['Not run · you declined it', 'use rg instead'])
+
+  const denied = 'Permission for this tool use was denied. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). Try a different approach.'
+  expect(buildRow(base({ output: denied, isErrored: true, ext: extract('Bash', denied), row: { ph: 'checking' } })).lines[0]?.t).toBe(
+    'Not run · permission denied',
+  )
+
+  const blocked = buildRow(base({ row: { ph: 'blocked', reason: 'Pushes to a shared branch.' } }))
+  expect(blocked.lines.map(l => l.t)).toEqual(['Not run · auto mode blocked it', 'Pushes to a shared branch.'])
+  expect(blocked.glyph).toBe('error')
+
+  // Approved, then failed: a failure, not a refusal.
+  const failed = 'Exit code 1\nboom'
+  const f = buildRow(base({ output: failed, isErrored: true, ext: extract('Bash', failed), row: { ph: 'asking' } }))
+  expect(f.lines[0]?.t).toBe('Failed · exit 1')
 })

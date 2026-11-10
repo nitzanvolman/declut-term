@@ -1,6 +1,6 @@
 {
   "name": "declut-term",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Tool-call rows as compact digests: what is happening now, a Haiku summary of what came back, token estimates, and a click to open the original row.",
   "author": {
     "name": "Nitzan Volman"

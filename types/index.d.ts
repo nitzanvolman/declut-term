@@ -10,8 +10,15 @@ export type Rule = { ro?: Mode; rw?: Mode; as?: CountsAs }
 /** Rules by target: `tool:<name>`, `server:<server>`, or `builtin`. */
 export type Rules = Record<string, Rule>
 
-/** Where a call is between the model writing it and its result. */
-export type Phase = 'started' | 'asking' | 'running' | 'denied'
+/**
+ * Where a call is between the model writing it and its result.
+ *
+ * checking: an ask that no dialog has shown yet (auto mode's check, or nobody
+ * can be asked) · asking: a dialog is open for the person · approval: a host
+ * program answers the ask (the desktop app's card, an SDK host) · denied: a
+ * permission rule refused it · blocked: auto mode refused it.
+ */
+export type Phase = 'started' | 'checking' | 'asking' | 'approval' | 'running' | 'denied' | 'blocked'
 
 /** Why a row has no summary. */
 export type NoSummary = 'timed out' | 'Haiku error' | 'busy' | 'session cap reached'
@@ -40,6 +47,8 @@ export type Row = {
   win?: boolean
   /** The settings rule that refused the call. */
   rule?: string
+  /** Why auto mode refused the call. */
+  reason?: string
 }
 
 /** One line of the ⎿ block. */

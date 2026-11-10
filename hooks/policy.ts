@@ -225,6 +225,22 @@ const errorObject = (json: unknown): string | undefined => {
 
 const exitCode = (text: string) => /Exit code (\d+)/.exec(text)?.[1]
 
+/**
+ * A call that never ran, from the text the engine returns in its place: the
+ * person declined it (with what they said, if anything), a rule or auto mode
+ * denied it, or the dialog closed unanswered.
+ */
+export const refusal = (text: string): { t: string; said?: string } | undefined => {
+  const s = text.trim()
+  if (/^The user doesn't want to proceed with this tool use\./.test(s)) {
+    const said = /the user said:\s*([\s\S]+)$/.exec(s)?.[1]?.trim()
+    return { t: 'Not run · you declined it', ...(said ? { said: sane(said) } : {}) }
+  }
+  if (/^Permission for this tool use was denied\./.test(s)) return { t: 'Not run · permission denied' }
+  if (/the action awaiting approval did not run/.test(s)) return { t: 'Not run · the approval was closed unanswered' }
+  return undefined
+}
+
 export const buildRow = (r: RowIn): RowOut => {
   const name = displayName(r.tool)
   const titleBudget = Math.max(12, r.cols - cells(name) - 8)
@@ -283,12 +299,19 @@ export const buildRow = (r: RowIn): RowOut => {
     return { t: clipEnd(f.line, lineW - 12), k: 'raw', tail: f.more > 0 ? `+${num(f.more)} lines` : undefined }
   }
   const elapsed = row.t0 !== undefined && row.t1 !== undefined ? row.t1 - row.t0 : undefined
+  const blockedLines = (): Line[] => [
+    fail('Not run · auto mode blocked it'),
+    ...(row.reason ? wrap(row.reason, lineW, 2).map(t => ({ t, k: 'raw' as const })) : []),
+  ]
 
   // Not finished yet.
   if (r.isRunning || r.output === undefined) {
     if (r.isInterrupted) return res([fail(row.t0 ? `Interrupted after ${dur(r.now - row.t0)}` : 'Cancelled before it ran')], 'error')
     if (row.ph === 'denied') return res([fail('Not run · blocked by a permission rule')], 'error')
+    if (row.ph === 'blocked') return res(blockedLines(), 'error')
+    if (row.ph === 'checking') return res([status('Checking permission…')], 'inactive')
     if (row.ph === 'asking') return res([status('Waiting for your approval')], 'warning')
+    if (row.ph === 'approval') return res([status('Waiting for approval')], 'warning')
     if (row.ph === 'running' || (r.isRunning && row.ph === undefined && row.t0 !== undefined))
       return res([status(words.running)], 'inactive', { since: row.t0 })
     if (row.ph === 'started') return res([status('Waiting to run…')], 'inactive')
@@ -309,7 +332,14 @@ export const buildRow = (r: RowIn): RowOut => {
   if (r.isErrored) {
     if (row.ph === 'denied')
       return res([fail(`Not run · blocked by a permission rule${row.rule ? ` (${row.rule})` : ''}`)], 'error')
-    if (row.ph === 'asking' && row.t0 === undefined) return res([fail('Not run · you declined it')], 'error')
+    if (row.ph === 'blocked') return res(blockedLines(), 'error')
+    // Refusals are told apart by the engine's own text, never by the phase: an
+    // approved call that then fails is a failure, not a refusal.
+    const refused = refusal(text)
+    if (refused !== undefined) {
+      const said = refused.said ? wrap(refused.said, lineW, 2).map(t => ({ t, k: 'raw' as const })) : []
+      return res([fail(refused.t), ...said], 'error')
+    }
     const code = exitCode(text)
     const first = fail(`Failed${code ? ` · exit ${code}` : ''}`)
     const rest = row.s ? summaryLines(row.s) : text.trim() ? [rawLine(text.replace(/^Exit code \d+\s*/, ''))] : []

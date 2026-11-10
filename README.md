@@ -8,16 +8,23 @@ click again to fold it.
 
 ## What it does
 
-- **Live status.** A row moves through *Writing the command…*, *Waiting for
-  your approval*, *Running…*, *Done in 3.2s · 300 lines · summarizing…* and on
-  to the summary.
+- **Live status.** A row moves through *Writing the command…*, *Checking
+  permission…* (auto mode) or *Waiting for your approval* (only while a dialog
+  is open for you), *Running…*, *Done in 3.2s · 300 lines · summarizing…* and
+  on to the summary. A call that never ran says why: you declined it, a rule
+  or auto mode blocked it, or the dialog closed unanswered.
 - **Summaries.** Haiku summarizes long results using your session's own
   account, at most 3 at a time and at most 300 per session (you can change the
   cap). Short results are shown word for word instead.
 - **Calls that may change something** show their arguments in full, written as
   labelled lines rather than JSON. Values that look like secrets are masked.
 - **File reads** that come in a run collapse into one group line, with a line
-  per file. Click a file to open that read.
+  per file. Click a file to open that read. The group line takes the place of
+  Claude Code's own, including its "Ran N PreToolUse hooks" line and any
+  recalled memories; ctrl+o or a click shows them.
+- **ctrl+o and verbose.** ctrl+o shows Claude Code's full rows. With `verbose`
+  on in your settings, which marks every row as expanded, rows and groups stay
+  compact; click one to see it in full.
 - **Hover card.** Rest the pointer on a row's title for a second to see its
   arguments and result.
 - **Left alone:** edits and writes, where you review the diff; questions and

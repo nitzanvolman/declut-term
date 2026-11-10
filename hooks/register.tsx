@@ -8,6 +8,7 @@ import type {
   Mode,
   NoSummary,
   Pair,
+  Phase,
   Post,
   Row,
   Rule,
@@ -81,6 +82,26 @@ let lastId: string | undefined
 let hintId: string | undefined
 let hinted = true
 let root: string | undefined
+/**
+ * The `verbose` setting. With it on, the engine marks every row and group as
+ * expanded, so "expanded" says nothing about the person's wish and the mod
+ * still draws its own; with it off, expanded is the ctrl+o view, which shows
+ * everything as the engine draws it.
+ */
+let verbose = false
+const isFullView = (isExpanded: boolean | undefined) => isExpanded === true && !verbose
+/** The session's permission mode, from the classic events that carry it. */
+let permMode: string | undefined
+/** Calls whose check said ask, for matching a PermissionRequest (which has no id). */
+const asks = new Map<string, { tool: string; key: string }>()
+const keyOf = (v: unknown) => {
+  try {
+    return JSON.stringify(v ?? {})
+  } catch {
+    return ''
+  }
+}
+const WAITING: ReadonlySet<string> = new Set(['checking', 'asking', 'approval'])
 
 const extOf = (id: string, tool: string, output: unknown) => {
   const hit = extCache.get(id)
@@ -361,6 +382,11 @@ export const register: Register = (on, options: PluginOptions) => {
     } catch {
       root = undefined
     }
+    try {
+      verbose = (await $.settings.read({ key: 'verbose' })) === true
+    } catch {
+      verbose = false
+    }
     await $.command.register({
       name: 'declut-term',
       description:
@@ -377,10 +403,24 @@ export const register: Register = (on, options: PluginOptions) => {
     const id = e.tool_use_id
     const ro = e.isReadOnly === true
     const now = Date.now()
+    // An ask is the person's only where a dialog opens for it: at once outside
+    // auto mode; in auto mode only if its check hands it on, which the
+    // PermissionRequest hook below sees. A host program answers its own asks.
+    const ph: Phase =
+      v.decision === 'allow'
+        ? 'running'
+        : v.decision === 'deny'
+          ? 'denied'
+          : e.approver === 'host'
+            ? 'approval'
+            : e.approver === 'person' && permMode !== undefined && permMode !== 'auto'
+              ? 'asking'
+              : 'checking'
+    if (v.decision === 'ask') asks.set(id, { tool: e.tool, key: keyOf(e.input) })
     void update($, { ...ROWS, id: id }, (r: Row = {}): Row => ({
       ...r,
       ro,
-      ph: v.decision === 'ask' ? 'asking' : v.decision === 'deny' ? 'denied' : 'running',
+      ph,
       t0: v.decision === 'allow' ? now : r.t0,
       ...(v.decision === 'deny' && v.rule ? { rule: v.rule } : {}),
     }))
@@ -388,11 +428,76 @@ export const register: Register = (on, options: PluginOptions) => {
     return v
   })
 
+  // The engine's own merge of the settings, raised again when they change.
+  on('settings.read', async ($, e, next) => {
+    const out = await next(e)
+    if (e.source === undefined && out && typeof out === 'object') verbose = (out as { verbose?: unknown }).verbose === true
+    return out
+  })
+
+  // The permission mode rides on the classic events; these only read it.
+  on('classic.SessionStart', async ($, e, next) => {
+    permMode = e.permission_mode ?? permMode
+    return next(e)
+  })
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    permMode = e.permission_mode ?? permMode
+    return next(e)
+  })
+  on('classic.PostToolUse', async ($, e, next) => {
+    permMode = e.permission_mode ?? permMode
+    return next(e)
+  })
+
+  // A dialog is about to open for the person: the waiting call becomes theirs.
+  // The event carries no call id, so the call is found by tool and input.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    permMode = e.permission_mode ?? permMode
+    const key = keyOf(e.tool_input)
+    let id: string | undefined
+    for (const [k, a] of asks) if (a.tool === e.tool_name && a.key === key) id ??= k
+    if (id === undefined) for (const [k, a] of asks) if (a.tool === e.tool_name) id ??= k
+    if (id === undefined) return next(e)
+    const found = id
+    asks.delete(found)
+    void update($, { ...ROWS, id: found }, (r: Row = {}): Row => (WAITING.has(r.ph ?? '') ? { ...r, ph: 'asking' } : r))
+    const answer = await next(e)
+    // A settings hook beneath answered it, so no dialog opens.
+    const behavior = answer.decision?.behavior
+    if (behavior === 'allow')
+      void update($, { ...ROWS, id: found }, (r: Row = {}): Row => (r.ph === 'asking' ? { ...r, ph: 'running', t0: Date.now() } : r))
+    return answer
+  })
+
+  // Auto mode refused the call.
+  on('classic.PermissionDenied', async ($, e, next) => {
+    permMode = e.permission_mode ?? permMode
+    const reason = clipEnd(sane(String(e.reason ?? '')).replace(/\s+/g, ' ').trim(), 300)
+    void update($, { ...ROWS, id: e.tool_use_id }, (r: Row = {}): Row => ({
+      ...r,
+      ph: 'blocked',
+      ...(reason ? { reason } : {}),
+    }))
+    return next(e)
+  })
+
+  // Bash shows its run-in-background hint only from inside a running command:
+  // a call still marked as waiting for approval was approved and is running.
+  on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => {
+    const id = e.props.tool_use_id
+    const row: Row | undefined = await read($, { ...ROWS, id })
+    if (row !== undefined && WAITING.has(row.ph ?? '')) {
+      void update($, { ...ROWS, id }, (r: Row = {}): Row => (WAITING.has(r.ph ?? '') ? { ...r, ph: 'running', t0: Date.now() } : r))
+    }
+    return next(e)
+  })
+
   on('tool.call', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
     const id = e.tool_use_id
     void update($, { ...ROWS, id: id }, (r: Row = {}): Row => (r.ph === undefined ? { ...r, ph: 'started' } : r))
     const ran = await next(e)
+    asks.delete(id)
     const t1 = Date.now()
     if (ran.deny !== undefined) {
       void update($, { ...ROWS, id: id }, (r: Row = {}): Row => ({ ...r, ph: 'denied', t1 }))
@@ -406,7 +511,7 @@ export const register: Register = (on, options: PluginOptions) => {
         ...r,
         ro: r.ro ?? isRO,
         t1,
-        ...(r.t0 === undefined && r.ph !== 'asking' ? { t0: t1 } : {}),
+        ...(r.t0 === undefined && !WAITING.has(r.ph ?? '') ? { t0: t1 } : {}),
         o: estimate(text.length),
       }))
       if (splitMcp(e.tool)) await learn($, e.tool, isRO)
@@ -494,6 +599,7 @@ export const register: Register = (on, options: PluginOptions) => {
 
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
     const p = e.props
+    if (isFullView(p.isExpanded)) return next(e)
     const id = p.tool_use_id
     const d = await decide($, { ...p, tool_use_id: id })
     if (d === null) return next(e)
@@ -617,8 +723,15 @@ export const register: Register = (on, options: PluginOptions) => {
 
   // The engine's result block under a standalone row: hidden while folded.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
-    const p = e.props as { tool_use_id: string; tool?: string; output?: unknown; isErrored?: boolean; input?: unknown }
-    if (typeof p.tool !== 'string') return next(e)
+    const p = e.props as {
+      tool_use_id: string
+      tool?: string
+      output?: unknown
+      isErrored?: boolean
+      input?: unknown
+      isExpanded?: boolean
+    }
+    if (typeof p.tool !== 'string' || isFullView(p.isExpanded)) return next(e)
     const out = (p.output && typeof p.output === 'object' ? p.output : {}) as Record<string, unknown>
     // A Bash call started in the background never had a compact row.
     if (
@@ -645,7 +758,10 @@ export const register: Register = (on, options: PluginOptions) => {
   // A run of reads, searches and listings: the group's line, one line per call.
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     const g = e.props
-    if (!isOn || g.isExpanded || g.isCallsOnly === false || g.calls.length === 0) {
+    // isCallsOnly is not required: the engine sets it false for a PreToolUse
+    // hook's timing line, a recalled memory, or a call that failed. The group's
+    // own line takes their place; ctrl+o, or a click on a call, shows them.
+    if (!isOn || isFullView(g.isExpanded) || g.calls.length === 0) {
       return next(e)
     }
     const els = $.ui.resolve(e)
