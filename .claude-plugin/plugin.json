@@ -1,0 +1,57 @@
+{
+  "name": "declut-term",
+  "version": "0.2.0",
+  "description": "Tool-call rows as compact digests: what is happening now, a Haiku summary of what came back, token estimates, and a click to open the original row.",
+  "author": {
+    "name": "Nitzan Volman"
+  },
+  "homepage": "https://github.com/nitzanvolman/declut-term",
+  "repository": "https://github.com/nitzanvolman/declut-term",
+  "license": "MIT",
+  "keywords": [
+    "terminal",
+    "transcript",
+    "tool-calls",
+    "summary",
+    "haiku"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "declut-term",
+      "description": "Draw tool-call rows as compact digests.",
+      "default": true
+    },
+    "readOnlyCalls": {
+      "type": "string",
+      "title": "declut-term: read-only calls",
+      "description": "How calls the tool declares read-only are drawn, unless a rule in /declut-term tools says otherwise.",
+      "default": "Summary",
+      "options": [
+        "Summary",
+        "Summary + arguments",
+        "Compact",
+        "Off"
+      ]
+    },
+    "otherCalls": {
+      "type": "string",
+      "title": "declut-term: calls that may change something",
+      "description": "How calls not declared read-only are drawn, unless a rule in /declut-term tools says otherwise.",
+      "default": "Summary + arguments",
+      "options": [
+        "Summary",
+        "Summary + arguments",
+        "Compact",
+        "Off"
+      ]
+    },
+    "summaryCap": {
+      "type": "number",
+      "title": "declut-term: summaries per session",
+      "description": "Haiku summaries written in one session; past it, rows show the result's first line.",
+      "default": 300
+    }
+  }
+}

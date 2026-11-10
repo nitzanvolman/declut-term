@@ -1,0 +1,14 @@
+{
+  "name": "declut-term",
+  "owner": {
+    "name": "Nitzan Volman"
+  },
+  "description": "declut-term: compact, summarized tool-call rows for the Claude Code terminal.",
+  "plugins": [
+    {
+      "name": "declut-term",
+      "source": "./",
+      "description": "Tool-call rows as compact digests: what is happening now, a Haiku summary of what came back, token estimates, and a click to open the original row."
+    }
+  ]
+}
